@@ -26,6 +26,14 @@ const CATEGORIES = [
   { id: "other", label: "Other Accessory", hsn: "8473.30", newVal: 1000, usedVal: 500, unit: "Unit" },
 ];
 
+const DISPATCH_DEFAULT = {
+  name: "GMS Worldwide Express O/B/O Firstbase",
+  address: "Ground, Survey No. 71, 1st Main Road, Near Dasanapura Village",
+  city: "Dasanapura, Bengaluru",
+  state: "Karnataka",
+  pincode: "562162",
+};
+
 const TRANSPORT_REASONS = [
   "Delivery to employee on behalf of client",
   "Stock transfer to branch",
@@ -97,7 +105,7 @@ async function parseFile(file) {
 function groupOrders(rows) {
   const m = {};
   for (const r of rows) {
-    const ref = r.OrderReference || r.order_reference || r.order_id || "";
+    const ref = r.OrderReference || r["Order Id"] || r.order_reference || r.order_id || "";
     if (!ref) continue;
     if (!m[ref]) {
       m[ref] = {
@@ -110,10 +118,12 @@ function groupOrders(rows) {
       };
     }
     m[ref].lines.push({
-      lineId: r.OrderLine || "", itemCode: r.ItemCode || r.ShipItemCode || "",
-      qty: parseInt(r.OrderQty || "1") || 1, condition: r.MandatoryCondition || r.condition || "NEW",
+      lineId: r["Order Item ID"] || r.OrderLine || "",
+      itemCode: r.ItemCode || r.ShipItemCode || r["SKU ID"] || "",
+      qty: parseInt(r.OrderQty || "1") || 1,
+      condition: r.MandatoryCondition || r.condition || "NEW",
       serial: r.ManufacturerSerialNumber || "",
-      productName: r.ProductName || r.ProductTitle || r.product_name || "",
+      productName: r["Product Name"] || r.ProductName || r.ProductTitle || r.product_name || "",
       category: r.Category || r.category || "",
     });
   }
@@ -184,7 +194,8 @@ function buildChallanHTML(data, copy) {
         ${COMPANY_INFO.phone ? `<tr><td class="lbl">Phone:</td><td class="val">${COMPANY_INFO.phone}</td></tr>` : ""}
         <tr><td class="lbl">Email:</td><td class="val">${COMPANY_INFO.email}</td></tr>
         <tr><td class="lbl">GSTIN:</td><td class="val" style="font-weight:600">${COMPANY_INFO.gstin}</td></tr>
-        ${data.dispatchFrom ? `<tr><td class="lbl">Dispatch From:</td><td class="val">${data.dispatchFrom}</td></tr>` : ""}
+        ${data.dispatch.name ? `<tr><td class="lbl">Dispatch From:</td><td class="val" style="font-weight:600">${data.dispatch.name}</td></tr>
+        <tr><td class="lbl"></td><td class="val">${data.dispatch.address}<br/>${data.dispatch.city}, ${data.dispatch.state} ${data.dispatch.pincode}</td></tr>` : ""}
       </table>
     </div>
     <div class="dc-logo">
@@ -476,7 +487,11 @@ export default function App() {
   const [oRef, setORef] = useState("");
   const [ewb, setEwb] = useState("");
   const [deliveryTime, setDeliveryTime] = useState("");
-  const [dispatchFrom, setDispatchFrom] = useState("GMS Worldwide Express O/B/O Firstbase, Ground, Survey No. 71, 1st Main Road, Near Dasanapura Village, Dasanapura, Bengaluru 562162");
+  const [dispName, setDispName] = useState(DISPATCH_DEFAULT.name);
+  const [dispAddr, setDispAddr] = useState(DISPATCH_DEFAULT.address);
+  const [dispCity, setDispCity] = useState(DISPATCH_DEFAULT.city);
+  const [dispState, setDispState] = useState(DISPATCH_DEFAULT.state);
+  const [dispPin, setDispPin] = useState(DISPATCH_DEFAULT.pincode);
   const [items, setItems] = useState([
     { categoryId: "laptop", description: "", qty: 1, label: "Laptop", hsn: "8471.30", value: 45000, unit: "Unit", condition: "NEW", serial: "" },
   ]);
@@ -507,10 +522,12 @@ export default function App() {
     setORef(order.orderRef); setOwner(order.owner || "");
     setFromFile(true);
     const region = (order.region || "").trim().toUpperCase();
+    const regionNoSpace = region.replace(/\s+/g, "");
     const st = INDIAN_STATES.find(s =>
       s.abbr === region ||
       s.code === region ||
-      s.name.toUpperCase() === region
+      s.name.toUpperCase() === region ||
+      s.name.toUpperCase().replace(/\s+/g, "") === regionNoSpace
     );
     if (st) setCState(st.name);
 
@@ -556,7 +573,7 @@ export default function App() {
     consigneeState: cState, consigneeStateCode: stObj.code, consigneePincode: cPin,
     consigneePhone: cPhone, consigneeEmail: cEmail, consigneeGstin: cGstin, deliveryType, owner,
     reason, transporterName: transporter, awbNumber: awb, orderRef: oRef,
-    ewayBillNo: ewb, deliveryTime, dispatchFrom, items,
+    ewayBillNo: ewb, deliveryTime, dispatch: { name: dispName, address: dispAddr, city: dispCity, state: dispState, pincode: dispPin }, items,
   };
 
   const itemLabel = (line) => {
@@ -678,21 +695,34 @@ export default function App() {
         </div>
 
         {/* Transport */}
-        <div style={S.sec}>
-          <div style={S.secT}>Transport & Dispatch</div>
+          <div style={{ ...S.sec, marginTop: 14 }}>
+            <div style={S.secT}>Dispatch From (3PL Warehouse)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div><label style={S.label}>Name</label><input style={S.input} value={dispName} onChange={e => setDispName(e.target.value)} /></div>
+              <div><label style={S.label}>Pincode</label><input style={S.input} value={dispPin} onChange={e => setDispPin(e.target.value)} maxLength={6} /></div>
+            </div>
+            <div style={{ marginTop: 10 }}><label style={S.label}>Address</label><input style={S.input} value={dispAddr} onChange={e => setDispAddr(e.target.value)} /></div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 10 }}>
+              <div><label style={S.label}>City</label><input style={S.input} value={dispCity} onChange={e => setDispCity(e.target.value)} /></div>
+              <div><label style={S.label}>State</label><input style={S.input} value={dispState} onChange={e => setDispState(e.target.value)} /></div>
+            </div>
+          </div>
+
+          <div style={S.sec}>
+            <div style={S.secT}>Transport & Dispatch</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
             <div><label style={S.label}>Reason</label><select style={S.select} value={reason} onChange={e => setReason(e.target.value)}>{TRANSPORT_REASONS.map(r => <option key={r}>{r}</option>)}</select></div>
             <div><label style={S.label}>Client / Owner</label><input style={S.input} value={owner} onChange={e => setOwner(e.target.value)} placeholder="e.g. TYPEFORM" /></div>
             <div><label style={S.label}>Order Ref</label><input style={S.input} value={oRef} onChange={e => setORef(e.target.value)} /></div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 10 }}>
-            <div><label style={S.label}>Dispatch From (3PL Warehouse)</label><input style={S.input} value={dispatchFrom} onChange={e => setDispatchFrom(e.target.value)} placeholder="3PL warehouse address (optional)" /></div>
             <div><label style={S.label}>Transporter</label><input style={S.input} value={transporter} onChange={e => setTransporter(e.target.value)} placeholder="BlueDart" /></div>
             <div><label style={S.label}>AWB No.</label><input style={S.input} value={awb} onChange={e => setAwb(e.target.value)} /></div>
+            <div><label style={S.label}>Delivery Time</label><input style={S.input} value={deliveryTime} onChange={e => setDeliveryTime(e.target.value)} placeholder="e.g. 10:00 AM" /></div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 10 }}>
             <div><label style={S.label}>e-Way Bill</label><input style={S.input} value={ewb} onChange={e => setEwb(e.target.value)} /></div>
-            <div><label style={S.label}>Delivery Time</label><input style={S.input} value={deliveryTime} onChange={e => setDeliveryTime(e.target.value)} placeholder="e.g. 10:00 AM" /></div>
+            <div></div>
             <div></div>
           </div>
         </div>
