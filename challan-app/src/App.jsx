@@ -476,7 +476,7 @@ export default function App() {
   const [oRef, setORef] = useState("");
   const [ewb, setEwb] = useState("");
   const [deliveryTime, setDeliveryTime] = useState("");
-  const [dispatchFrom, setDispatchFrom] = useState("");
+  const [dispatchFrom, setDispatchFrom] = useState("GMS Worldwide Express O/B/O Firstbase, Ground, Survey No. 71, 1st Main Road, Near Dasanapura Village, Dasanapura, Bengaluru 562162");
   const [items, setItems] = useState([
     { categoryId: "laptop", description: "", qty: 1, label: "Laptop", hsn: "8471.30", value: 45000, unit: "Unit", condition: "NEW", serial: "" },
   ]);
