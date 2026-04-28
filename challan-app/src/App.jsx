@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import Papa from "papaparse";
 
 // ─── CONFIG ───
@@ -60,11 +60,37 @@ const INDIAN_STATES = [
   { name: "West Bengal", code: "19", abbr: "WB" },
 ];
 
+// ─── APPS SCRIPT API ───
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw9kB-Lr2lB5IFWhllD5GVJxX6jmtomKRsmLr_zBnQe341S-U_I5zEvdwSG9BR0benp/exec";
+
+async function fetchNextChallan() {
+  try {
+    const res = await fetch(`${APPS_SCRIPT_URL}?action=next`);
+    const data = await res.json();
+    return data.challanNumber || "DC------";
+  } catch { return "DC------"; }
+}
+
+async function registerChallan(payload) {
+  const res = await fetch(APPS_SCRIPT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" }, // Apps Script needs text/plain to avoid CORS preflight
+    body: JSON.stringify({ action: "register", ...payload }),
+  });
+  return await res.json();
+}
+
+async function checkOrderChallan(orderRef) {
+  try {
+    const res = await fetch(`${APPS_SCRIPT_URL}?action=check&orderRef=${encodeURIComponent(orderRef)}`);
+    return await res.json();
+  } catch { return { exists: false }; }
+}
+
 // ─── UTILITIES ───
-function genChallan(i = 0) {
-  const d = new Date();
-  const fy = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
-  return `FB/DC/${fy}-${(fy + 1).toString().slice(2)}/${String(Date.now() + i).slice(-6)}`;
+function genChallanLocal() {
+  // Fallback only — used for display before API responds
+  return "DC------";
 }
 
 function fmtCur(v) { return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v); }
@@ -470,7 +496,13 @@ export default function App() {
   const [uploadErr, setUploadErr] = useState("");
   const fileRef = useRef();
 
-  const [challanNum, setChallanNum] = useState(() => genChallan());
+  const [challanNum, setChallanNum] = useState("DC------");
+  const [isRegistered, setIsRegistered] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState("");
+
+  // Fetch next challan number on load
+  useEffect(() => { fetchNextChallan().then(n => setChallanNum(n)); }, []);
   const [cName, setCName] = useState("");
   const [cAddr, setCAddr] = useState("");
   const [cCity, setCCity] = useState("");
@@ -546,7 +578,13 @@ export default function App() {
       return { categoryId: "other", description: line.productName || shortId(line.itemCode), qty: line.qty || 1, label: "Other Accessory", hsn: "8473.30", value: cond === "USED" ? 500 : 1000, unit: "Unit", condition: cond, serial: line.serial || "" };
     });
     setItems(newItems.length ? newItems : [{ categoryId: "laptop", description: "", qty: 1, label: "Laptop", hsn: "8471.30", value: 45000, unit: "Unit", condition: "NEW", serial: "" }]);
-    setChallanNum(genChallan());
+    setIsRegistered(false);
+    setGenError("");
+    fetchNextChallan().then(n => setChallanNum(n));
+    // Check if order already has a challan
+    checkOrderChallan(order.orderRef).then(res => {
+      if (res.exists) setGenError(`⚠ This order already has challan ${res.challanNumber}. Generating a new one will create a duplicate.`);
+    });
   }, [itemMap]);
 
   const addItem = () => { const c = CATEGORIES[0]; setItems([...items, { categoryId: c.id, description: "", qty: 1, label: c.label, hsn: c.hsn, value: c.newVal, unit: c.unit, condition: "NEW", serial: "" }]); };
@@ -728,10 +766,50 @@ export default function App() {
         </div>
 
         {/* Generate */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
-          <button style={{ ...S.btn, opacity: canGen ? 1 : 0.4, fontSize: 14, padding: "12px 30px" }} disabled={!canGen}
-            onClick={() => { setPreviewCopy("Original for Consignee"); setView("preview"); }}>
-            Generate Challan →
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, marginTop: 16 }}>
+          {genError && <div style={{ fontSize: 12, color: genError.startsWith("⚠") ? T.warn : T.error, fontWeight: 600, background: genError.startsWith("⚠") ? T.warnBg : "#fef2f2", padding: "8px 14px", borderRadius: 6, maxWidth: 500, textAlign: "right" }}>{genError}</div>}
+          <button
+            style={{ ...S.btn, opacity: (canGen && !generating) ? 1 : 0.4, fontSize: 14, padding: "12px 30px" }}
+            disabled={!canGen || generating}
+            onClick={async () => {
+              setGenerating(true);
+              setGenError("");
+              try {
+                const conditions = [...new Set(items.map(i => i.condition))].join(", ");
+                const payload = {
+                  orderRef: oRef || "",
+                  owner: owner || "",
+                  consigneeName: cName,
+                  consigneeCity: cCity,
+                  consigneeState: cState,
+                  deliveryType,
+                  itemsCount: items.length,
+                  itemsDescription: items.map(i => i.description || i.label).join(", "),
+                  totalValue: items.reduce((s, i) => s + i.qty * i.value, 0),
+                  condition: conditions,
+                  transporter: transporter || "",
+                  awbNumber: awb || "",
+                  ewayBill: ewb || "",
+                  dispatchFrom: [dispName, dispAddr, dispCity, dispState, dispPin].filter(Boolean).join(", "),
+                  generatedBy: "",
+                  date: fmtDate(new Date()),
+                };
+                const result = await registerChallan(payload);
+                if (result.success) {
+                  setChallanNum(result.challanNumber);
+                  setIsRegistered(true);
+                  setPreviewCopy("Original for Consignee");
+                  setView("preview");
+                } else {
+                  setGenError("Registration failed: " + (result.error || "Unknown error"));
+                }
+              } catch (err) {
+                setGenError("Could not reach challan register. Check your internet connection.");
+              } finally {
+                setGenerating(false);
+              }
+            }}>
+            {generating ? "Registering…" : "Generate Challan →"}
           </button>
         </div>
 
