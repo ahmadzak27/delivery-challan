@@ -35,21 +35,21 @@ const TRANSPORT_REASONS = [
 ];
 
 const INDIAN_STATES = [
-  { name: "Andhra Pradesh", code: "37" }, { name: "Arunachal Pradesh", code: "12" },
-  { name: "Assam", code: "18" }, { name: "Bihar", code: "10" },
-  { name: "Chhattisgarh", code: "22" }, { name: "Delhi", code: "07" },
-  { name: "Goa", code: "30" }, { name: "Gujarat", code: "24" },
-  { name: "Haryana", code: "06" }, { name: "Himachal Pradesh", code: "02" },
-  { name: "Jharkhand", code: "20" }, { name: "Karnataka", code: "29" },
-  { name: "Kerala", code: "32" }, { name: "Madhya Pradesh", code: "23" },
-  { name: "Maharashtra", code: "27" }, { name: "Manipur", code: "14" },
-  { name: "Meghalaya", code: "17" }, { name: "Mizoram", code: "15" },
-  { name: "Nagaland", code: "13" }, { name: "Odisha", code: "21" },
-  { name: "Punjab", code: "03" }, { name: "Rajasthan", code: "08" },
-  { name: "Sikkim", code: "11" }, { name: "Tamil Nadu", code: "33" },
-  { name: "Telangana", code: "36" }, { name: "Tripura", code: "16" },
-  { name: "Uttar Pradesh", code: "09" }, { name: "Uttarakhand", code: "05" },
-  { name: "West Bengal", code: "19" },
+  { name: "Andhra Pradesh", code: "37", abbr: "AP" }, { name: "Arunachal Pradesh", code: "12", abbr: "AR" },
+  { name: "Assam", code: "18", abbr: "AS" }, { name: "Bihar", code: "10", abbr: "BR" },
+  { name: "Chhattisgarh", code: "22", abbr: "CG" }, { name: "Delhi", code: "07", abbr: "DL" },
+  { name: "Goa", code: "30", abbr: "GA" }, { name: "Gujarat", code: "24", abbr: "GJ" },
+  { name: "Haryana", code: "06", abbr: "HR" }, { name: "Himachal Pradesh", code: "02", abbr: "HP" },
+  { name: "Jharkhand", code: "20", abbr: "JH" }, { name: "Karnataka", code: "29", abbr: "KA" },
+  { name: "Kerala", code: "32", abbr: "KL" }, { name: "Madhya Pradesh", code: "23", abbr: "MP" },
+  { name: "Maharashtra", code: "27", abbr: "MH" }, { name: "Manipur", code: "14", abbr: "MN" },
+  { name: "Meghalaya", code: "17", abbr: "ML" }, { name: "Mizoram", code: "15", abbr: "MZ" },
+  { name: "Nagaland", code: "13", abbr: "NL" }, { name: "Odisha", code: "21", abbr: "OD" },
+  { name: "Punjab", code: "03", abbr: "PB" }, { name: "Rajasthan", code: "08", abbr: "RJ" },
+  { name: "Sikkim", code: "11", abbr: "SK" }, { name: "Tamil Nadu", code: "33", abbr: "TN" },
+  { name: "Telangana", code: "36", abbr: "TG" }, { name: "Tripura", code: "16", abbr: "TR" },
+  { name: "Uttar Pradesh", code: "09", abbr: "UP" }, { name: "Uttarakhand", code: "05", abbr: "UK" },
+  { name: "West Bengal", code: "19", abbr: "WB" },
 ];
 
 // ─── UTILITIES ───
@@ -506,7 +506,12 @@ export default function App() {
     setCPhone(String(order.phone || "")); setCEmail(order.email || "");
     setORef(order.orderRef); setOwner(order.owner || "");
     setFromFile(true);
-    const st = INDIAN_STATES.find(s => s.name.toLowerCase() === (order.region || "").toLowerCase());
+    const region = (order.region || "").trim().toUpperCase();
+    const st = INDIAN_STATES.find(s =>
+      s.abbr === region ||
+      s.code === region ||
+      s.name.toUpperCase() === region
+    );
     if (st) setCState(st.name);
 
     const newItems = order.lines.map(line => {
