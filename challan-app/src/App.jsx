@@ -34,12 +34,18 @@ const DISPATCH_DEFAULT = {
   pincode: "562162",
 };
 
-const TRANSPORT_REASONS = [
+const TRANSPORT_REASONS_OUT = [
   "Delivery to employee on behalf of client",
   "Stock transfer to branch",
   "Supply on approval basis",
-  "Return of goods for repair",
   "Movement for job work",
+];
+
+const TRANSPORT_REASONS_IN = [
+  "Return of company equipment to warehouse",
+  "Return of goods for repair",
+  "Return of defective equipment",
+  "Retrieval of leased equipment",
 ];
 
 const INDIAN_STATES = [
@@ -140,20 +146,30 @@ function groupOrders(rows) {
         city: r.ShipToCity || "", zip: r.ShipToZipCode || "",
         region: r.ShipToRegionCode || "", country: r.ShipToCountry || "",
         phone: r.ShipToTelephone || "", email: r.ShipToEmail || "",
-        owner: r.Owner || "", lines: [],
+        owner: r.Owner || "",
+        outputType: r.OutputType || "",
+        lines: [],
       };
     }
     m[ref].lines.push({
       lineId: r["Order Item ID"] || r.OrderLine || "",
       itemCode: r.ItemCode || r.ShipItemCode || r["SKU ID"] || "",
       qty: parseInt(r.OrderQty || "1") || 1,
-      condition: r.MandatoryCondition || r.condition || "NEW",
+      condition: r.MandatoryCondition || r.PreferredCondition || r.condition || "",
       serial: r.ManufacturerSerialNumber || "",
       productName: r["Product Name"] || r.ProductName || r.ProductTitle || r.product_name || "",
       category: r.Category || r.category || "",
     });
   }
   return Object.values(m);
+}
+
+// Detect if a set of orders are returns based on OutputType
+function detectDirection(orders) {
+  const types = new Set(orders.map(o => o.outputType.toUpperCase()));
+  // OEB = Outbound Empty Box (return pickup), OHD = Outbound Home Delivery
+  if (types.has("OEB") || types.has("RET") || types.has("RTN")) return "inbound";
+  return "outbound";
 }
 
 // ─── LOGO (Firstbase "FB" SVG placeholder — replace with actual logo data URL) ───
@@ -211,7 +227,7 @@ function buildChallanHTML(data, copy) {
   return `
 <div class="dc">
   <!-- HEADER with Company Info + Logo -->
-  <div class="dc-title">Delivery Challan</div>
+  <div class="dc-title">Delivery Challan${data.direction === "inbound" ? ' <span style="background:#f59e0b;color:#fff;padding:2px 10px;border-radius:10px;font-size:10px;margin-left:8px;letter-spacing:0.08em">RETURN</span>' : ""}</div>
   <div class="dc-copy">${copy}</div>
 
   <div class="dc-header">
@@ -489,6 +505,7 @@ function MappingModal({ codes, itemMap, onSave, onClose }) {
 // ═══════════════════════════════════════════════════
 export default function App() {
   const [view, setView] = useState("form");
+  const [direction, setDirection] = useState("outbound"); // "outbound" or "inbound"
   const [previewCopy, setPreviewCopy] = useState("Original for Consignee");
 
   const [orders, setOrders] = useState([]);
@@ -515,7 +532,7 @@ export default function App() {
   const [cGstin, setCGstin] = useState("");
   const [deliveryType, setDeliveryType] = useState("residence");
   const [owner, setOwner] = useState("");
-  const [reason, setReason] = useState(TRANSPORT_REASONS[0]);
+  const [reason, setReason] = useState(TRANSPORT_REASONS_OUT[0]);
   const [transporter, setTransporter] = useState("");
   const [awb, setAwb] = useState("");
   const [oRef, setORef] = useState("");
@@ -540,6 +557,10 @@ export default function App() {
       const parsed = groupOrders(rows);
       if (!parsed.length) { setUploadErr("Could not parse orders. Check headers."); return; }
       setOrders(parsed);
+      // Auto-detect if this is a return file
+      const detected = detectDirection(parsed);
+      setDirection(detected);
+      setReason(detected === "inbound" ? TRANSPORT_REASONS_IN[0] : TRANSPORT_REASONS_OUT[0]);
       const codes = new Set();
       parsed.forEach(o => o.lines.forEach(l => { if (l.itemCode && !l.productName && !l.category) codes.add(l.itemCode); }));
       const need = [...codes].filter(c => !itemMap[c]?.categoryId);
@@ -549,25 +570,57 @@ export default function App() {
   }, [itemMap]);
 
   const selectOrder = useCallback((order) => {
-    setCName(order.name);
-    setCAddr([order.addr1, order.addr2].filter(Boolean).join(", "));
-    setCCity(order.city); setCPin(String(order.zip || ""));
-    setCPhone(String(order.phone || "")); setCEmail(order.email || "");
+    if (direction === "inbound") {
+      // RETURN: Employee address = pickup from (dispatch), Warehouse = consignee (destination)
+      // Dispatch from = employee address
+      setDispName(order.name);
+      setDispAddr([order.addr1, order.addr2].filter(Boolean).join(", "));
+      setDispCity(order.city);
+      const region = (order.region || "").trim().toUpperCase();
+      const regionNoSpace = region.replace(/\s+/g, "");
+      const st = INDIAN_STATES.find(s => s.abbr === region || s.code === region || s.name.toUpperCase() === region || s.name.toUpperCase().replace(/\s+/g, "") === regionNoSpace);
+      setDispState(st ? st.name : order.region || "");
+      setDispPin(String(order.zip || ""));
+
+      // Consignee = GMS warehouse (destination)
+      setCName(DISPATCH_DEFAULT.name);
+      setCAddr(DISPATCH_DEFAULT.address);
+      setCCity(DISPATCH_DEFAULT.city);
+      setCState(DISPATCH_DEFAULT.state);
+      setCPin(DISPATCH_DEFAULT.pincode);
+      setCPhone(""); setCEmail("");
+      setCGstin(COMPANY_INFO.gstin);
+      setDeliveryType("office");
+    } else {
+      // OUTBOUND: Normal flow — employee is consignee
+      setCName(order.name);
+      setCAddr([order.addr1, order.addr2].filter(Boolean).join(", "));
+      setCCity(order.city); setCPin(String(order.zip || ""));
+      setCPhone(String(order.phone || "")); setCEmail(order.email || "");
+      setCGstin("");
+      setDeliveryType("residence");
+      // Reset dispatch to default warehouse
+      setDispName(DISPATCH_DEFAULT.name);
+      setDispAddr(DISPATCH_DEFAULT.address);
+      setDispCity(DISPATCH_DEFAULT.city);
+      setDispState(DISPATCH_DEFAULT.state);
+      setDispPin(DISPATCH_DEFAULT.pincode);
+
+      const region = (order.region || "").trim().toUpperCase();
+      const regionNoSpace = region.replace(/\s+/g, "");
+      const st = INDIAN_STATES.find(s => s.abbr === region || s.code === region || s.name.toUpperCase() === region || s.name.toUpperCase().replace(/\s+/g, "") === regionNoSpace);
+      if (st) setCState(st.name);
+    }
+
     setORef(order.orderRef); setOwner(order.owner || "");
     setFromFile(true);
-    const region = (order.region || "").trim().toUpperCase();
-    const regionNoSpace = region.replace(/\s+/g, "");
-    const st = INDIAN_STATES.find(s =>
-      s.abbr === region ||
-      s.code === region ||
-      s.name.toUpperCase() === region ||
-      s.name.toUpperCase().replace(/\s+/g, "") === regionNoSpace
-    );
-    if (st) setCState(st.name);
+
+    // For returns, default condition to USED since equipment is being returned
+    const defaultCond = direction === "inbound" ? "USED" : "NEW";
 
     const newItems = order.lines.map(line => {
       const mapped = itemMap[line.itemCode];
-      const cond = (line.condition || "NEW").toUpperCase();
+      const cond = (line.condition || defaultCond).toUpperCase() || defaultCond;
       if (mapped?.categoryId) {
         const cat = CATEGORIES.find(c => c.id === mapped.categoryId);
         const val = cond === "USED" ? cat.usedVal : cat.newVal;
@@ -583,11 +636,10 @@ export default function App() {
     setIsRegistered(false);
     setGenError("");
     fetchNextChallan().then(n => setChallanNum(n));
-    // Check if order already has a challan
     checkOrderChallan(order.orderRef).then(res => {
       if (res.exists) setGenError(`⚠ This order already has challan ${res.challanNumber}. Generating a new one will create a duplicate.`);
     });
-  }, [itemMap]);
+  }, [itemMap, direction]);
 
   const addItem = () => { const c = CATEGORIES[0]; setItems([...items, { categoryId: c.id, description: "", qty: 1, label: c.label, hsn: c.hsn, value: c.newVal, unit: c.unit, condition: "NEW", serial: "" }]); };
   const updItem = (i, f, v) => {
@@ -613,7 +665,7 @@ export default function App() {
     consigneeState: cState, consigneeStateCode: stObj.code, consigneePincode: cPin,
     consigneePhone: cPhone, consigneeEmail: cEmail, consigneeGstin: cGstin, deliveryType, owner,
     reason, transporterName: transporter, awbNumber: awb, orderRef: oRef,
-    ewayBillNo: ewb, deliveryTime, dispatch: { name: dispName, address: dispAddr, city: dispCity, state: dispState, pincode: dispPin }, items,
+    ewayBillNo: ewb, deliveryTime, direction, dispatch: { name: dispName, address: dispAddr, city: dispCity, state: dispState, pincode: dispPin }, items,
   };
 
   const itemLabel = (line) => {
@@ -644,10 +696,21 @@ export default function App() {
         </div>
       </div>
 
+      {/* Direction toggle */}
+      <div style={{ background: direction === "inbound" ? "#fef3c7" : "#ecfdf5", padding: "8px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `2px solid ${direction === "inbound" ? "#f59e0b" : "#10b981"}` }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => { setDirection("outbound"); setReason(TRANSPORT_REASONS_OUT[0]); }} style={{ ...S.btnSm, background: direction === "outbound" ? "#10b981" : T.inputBg, color: direction === "outbound" ? "#fff" : T.muted, border: "none", fontSize: 12, padding: "6px 16px" }}>📦 Outbound (Delivery)</button>
+          <button onClick={() => { setDirection("inbound"); setReason(TRANSPORT_REASONS_IN[0]); }} style={{ ...S.btnSm, background: direction === "inbound" ? "#f59e0b" : T.inputBg, color: direction === "inbound" ? "#fff" : T.muted, border: "none", fontSize: 12, padding: "6px 16px" }}>↩ Inbound (Return)</button>
+        </div>
+        <span style={{ fontSize: 11, fontWeight: 600, color: direction === "inbound" ? "#92400e" : "#065f46" }}>
+          {direction === "inbound" ? "Employee → Warehouse · Equipment retrieval" : "Warehouse → Employee · Equipment delivery"}
+        </span>
+      </div>
+
       <div style={{ maxWidth: 940, margin: "0 auto", padding: "20px 18px" }}>
         {/* Upload */}
         <div style={{ ...S.sec, background: orders.length ? "#f0fdf4" : T.card, borderColor: orders.length ? "#86efac" : T.border }}>
-          <div style={S.secT}><span style={{ display: "flex", justifyContent: "space-between" }}><span>📁 Upload Order File</span>{orders.length > 0 && <span style={{ fontSize: 11, color: T.success, fontWeight: 600 }}>✓ {orders.length} orders</span>}</span></div>
+          <div style={S.secT}><span style={{ display: "flex", justifyContent: "space-between" }}><span>📁 Upload {direction === "inbound" ? "Return" : "Order"} File</span>{orders.length > 0 && <span style={{ fontSize: 11, color: T.success, fontWeight: 600 }}>✓ {orders.length} {direction === "inbound" ? "returns" : "orders"}</span>}</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <input ref={fileRef} type="file" accept=".csv" onChange={handleUpload} style={{ display: "none" }} />
             <button style={S.btn} onClick={() => fileRef.current?.click()}>Upload CSV</button>
@@ -679,7 +742,7 @@ export default function App() {
 
         {/* Consignee */}
         <div style={S.sec}>
-          <div style={S.secT}>Consignee{fromFile && <span style={{ float: "right", fontSize: 10, color: T.success }}>✓ From file</span>}</div>
+          <div style={S.secT}>{direction === "inbound" ? "Destination (Warehouse)" : "Consignee (Employee)"}{fromFile && <span style={{ float: "right", fontSize: 10, color: T.success }}>✓ From file</span>}</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             <button onClick={() => setDeliveryType("residence")} style={{ ...S.btnSm, background: deliveryType === "residence" ? T.primary : T.inputBg, color: deliveryType === "residence" ? "#fff" : T.muted, border: `1px solid ${deliveryType === "residence" ? T.primary : T.border}`, fontSize: 11, padding: "6px 14px" }}>🏠 Residence</button>
             <button onClick={() => setDeliveryType("office")} style={{ ...S.btnSm, background: deliveryType === "office" ? T.primary : T.inputBg, color: deliveryType === "office" ? "#fff" : T.muted, border: `1px solid ${deliveryType === "office" ? T.primary : T.border}`, fontSize: 11, padding: "6px 14px" }}>🏢 Office</button>
@@ -736,7 +799,7 @@ export default function App() {
 
         {/* Transport */}
           <div style={{ ...S.sec, marginTop: 14 }}>
-            <div style={S.secT}>Dispatch From (3PL Warehouse)</div>
+            <div style={S.secT}>{direction === "inbound" ? "Pickup From (Employee Location)" : "Dispatch From (3PL Warehouse)"}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div><label style={S.label}>Name</label><input style={S.input} value={dispName} onChange={e => setDispName(e.target.value)} /></div>
               <div><label style={S.label}>Pincode</label><input style={S.input} value={dispPin} onChange={e => setDispPin(e.target.value)} maxLength={6} /></div>
@@ -751,7 +814,7 @@ export default function App() {
           <div style={S.sec}>
             <div style={S.secT}>Transport & Dispatch</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-            <div><label style={S.label}>Reason</label><select style={S.select} value={reason} onChange={e => setReason(e.target.value)}>{TRANSPORT_REASONS.map(r => <option key={r}>{r}</option>)}</select></div>
+            <div><label style={S.label}>Reason</label><select style={S.select} value={reason} onChange={e => setReason(e.target.value)}>{(direction === "inbound" ? TRANSPORT_REASONS_IN : TRANSPORT_REASONS_OUT).map(r => <option key={r}>{r}</option>)}</select></div>
             <div><label style={S.label}>Client / Owner</label><input style={S.input} value={owner} onChange={e => setOwner(e.target.value)} placeholder="e.g. TYPEFORM" /></div>
             <div><label style={S.label}>Order Ref</label><input style={S.input} value={oRef} onChange={e => setORef(e.target.value)} /></div>
           </div>
